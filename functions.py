@@ -121,3 +121,160 @@ def median_filter2_3(img_path):
     on_trackbar(1)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+# ========== Question 3 ========== #
+def sobel_x3_1(img_path):
+    # 1. Read and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # 2. Apply Gaussian smoothing to reduce noise
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    # 3. Define Sobel X kernel
+    sobel_x_kernel = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1]
+    ])
+    # 4. Get image dimensions for loops
+    rows, cols = blur.shape
+    sobel_x_img = np.zeros_like(blur, dtype=np.float32)
+    # 5. Manual convolution
+    for i in range(1, rows - 1):
+        for j in range(1, cols - 1):
+            region = blur[i - 1:i + 2, j - 1:j + 2]
+            gx = np.sum(region * sobel_x_kernel)
+            sobel_x_img[i, j] = gx
+    # 6. Normalize to 0¡V255 for display
+    sobel_x_img = np.abs(sobel_x_img)
+    sobel_x_img = (sobel_x_img / np.max(sobel_x_img) * 255).astype(np.uint8)
+    # 7. Display result
+    cv2.imshow("Sobel X", sobel_x_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def sobel_y3_2(img_path):
+    # 1. Read and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # 2. Gaussian smoothing to reduce noise
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    # 3. Define Sobel Y kernel
+    sobel_y_kernel = np.array([
+        [-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1]
+    ])
+    # 4. Initialize output
+    rows, cols = blur.shape
+    sobel_y_img = np.zeros_like(blur, dtype=np.float32)
+    # 5. Manual convolution
+    for i in range(1, rows - 1):
+        for j in range(1, cols - 1):
+            region = blur[i - 1:i + 2, j - 1:j + 2]
+            gy = np.sum(region * sobel_y_kernel)
+            sobel_y_img[i, j] = gy
+    # 6. Normalize to 0¡V255 for display
+    sobel_y_img = np.abs(sobel_y_img)
+    sobel_y_img = (sobel_y_img / np.max(sobel_y_img) * 255).astype(np.uint8)
+    # 7. Display result
+    cv2.imshow("Sobel Y", sobel_y_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def sobel_combination_and_threshold3_3(img_path):
+    # Step 1: Read and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Step 2: Apply Gaussian Blur
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    # Step 3: Define Sobel X and Y kernels
+    sobel_x_kernel = np.array([[-1, 0, 1],
+                               [-2, 0, 2],
+                               [-1, 0, 1]], dtype=np.float32)
+
+    sobel_y_kernel = np.array([[-1, -2, -1],
+                               [ 0,  0,  0],
+                               [ 1,  2,  1]], dtype=np.float32)
+    # Step 4: Manually apply Sobel filter
+    rows, cols = blur.shape
+    sobel_x_img = np.zeros_like(blur, dtype=np.float32)
+    sobel_y_img = np.zeros_like(blur, dtype=np.float32)
+    for i in range(1, rows - 1):
+        for j in range(1, cols - 1):
+            region = blur[i - 1:i + 2, j - 1:j + 2]
+            gx = np.sum(region * sobel_x_kernel)
+            gy = np.sum(region * sobel_y_kernel)
+            sobel_x_img[i, j] = gx
+            sobel_y_img[i, j] = gy
+    # Step 5: Combine Sobel X and Y
+    combination = np.sqrt(np.square(sobel_x_img) + np.square(sobel_y_img))
+    # Step 6: Normalize to 0¡V255
+    normalized = cv2.normalize(combination, None, 0, 255, cv2.NORM_MINMAX)
+    normalized = normalized.astype(np.uint8)
+    # Step 7: Apply thresholds
+    _, result_128 = cv2.threshold(normalized, 128, 255, cv2.THRESH_BINARY)
+    _, result_28 = cv2.threshold(normalized, 28, 255, cv2.THRESH_BINARY)
+    # Step 8: Show results
+    cv2.imshow("Combination (Sobel X + Y)", normalized)
+    cv2.imshow("Threshold 128", result_128)
+    cv2.imshow("Threshold 28", result_28)
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def gradient_angle3_4(img_path):
+    # Step 1: Read image and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    # Step 2: Sobel X and Y
+    sobel_x_kernel = np.array([[-1, 0, 1],
+                               [-2, 0, 2],
+                               [-1, 0, 1]], dtype=np.float32)
+    sobel_y_kernel = np.array([[-1, -2, -1],
+                               [0, 0, 0],
+                               [1, 2, 1]], dtype=np.float32)
+
+    sobel_x = cv2.filter2D(blur, cv2.CV_32F, sobel_x_kernel)
+    sobel_y = cv2.filter2D(blur, cv2.CV_32F, sobel_y_kernel)
+
+    # Step 3: Compute gradient magnitude
+    combination = np.sqrt(np.square(sobel_x) + np.square(sobel_y))
+    combination = cv2.normalize(combination, None, 0, 255, cv2.NORM_MINMAX)
+    combination = combination.astype(np.uint8)
+
+    # Step 4: Compute gradient angle
+    angle = np.arctan2(sobel_y, sobel_x)
+    angle_deg = np.degrees(angle)
+    angle_deg = np.mod(angle_deg, 360)  # 0¡V360¢X
+
+    # Step 5: Create masks for given ranges
+    mask1 = np.zeros_like(angle_deg, dtype=np.uint8)
+    mask2 = np.zeros_like(angle_deg, dtype=np.uint8)
+    mask1[(angle_deg >= 170) & (angle_deg <= 190)] = 255
+    mask2[(angle_deg >= 260) & (angle_deg <= 280)] = 255
+
+    # Step 6: Apply bitwise AND to highlight areas
+    result1 = cv2.bitwise_and(combination, mask1)
+    result2 = cv2.bitwise_and(combination, mask2)
+
+    # Step 7: Display
+    cv2.imshow("Gradient Angle 170-190", result1)
+    cv2.imshow("Gradient Angle 260-280", result2)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# ========== Question 4 ========== #
