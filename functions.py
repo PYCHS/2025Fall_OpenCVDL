@@ -188,48 +188,41 @@ def sobel_y3_2(img_path):
     cv2.destroyAllWindows()
 
 def sobel_combination_and_threshold3_3(img_path):
-    # Step 1: Read and convert to grayscale
+    # Step 1: Read image and convert to grayscale
     image = cv2.imread(img_path)
     if image is None:
         print("Error: Cannot load image.")
         return
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Step 2: Apply Gaussian Blur
+    # Step 2: Light Gaussian smoothing (same as friend's m=1 ¡÷ 3x3)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    # Step 3: Define Sobel X and Y kernels
-    sobel_x_kernel = np.array([[-1, 0, 1],
-                               [-2, 0, 2],
-                               [-1, 0, 1]], dtype=np.float32)
-
-    sobel_y_kernel = np.array([[-1, -2, -1],
-                               [ 0,  0,  0],
-                               [ 1,  2,  1]], dtype=np.float32)
-    # Step 4: Manually apply Sobel filter
-    rows, cols = blur.shape
-    sobel_x_img = np.zeros_like(blur, dtype=np.float32)
-    sobel_y_img = np.zeros_like(blur, dtype=np.float32)
-    for i in range(1, rows - 1):
-        for j in range(1, cols - 1):
-            region = blur[i - 1:i + 2, j - 1:j + 2]
-            gx = np.sum(region * sobel_x_kernel)
-            gy = np.sum(region * sobel_y_kernel)
-            sobel_x_img[i, j] = gx
-            sobel_y_img[i, j] = gy
-    # Step 5: Combine Sobel X and Y
-    combination = np.sqrt(np.square(sobel_x_img) + np.square(sobel_y_img))
-    # Step 6: Normalize to 0¡V255
+    # Step 3: Sobel X/Y in float (keep full precision)
+    sobel_x_f = cv2.Sobel(blur, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y_f = cv2.Sobel(blur, cv2.CV_64F, 0, 1, ksize=3)
+    # Step 4: Gradient magnitude (friend-style, not weighted sum)
+    magnitude = np.sqrt(sobel_x_f * sobel_x_f + sobel_y_f * sobel_y_f)
+    # Step 5: Manual 0..255 stretch (first stretch, prevents dim edges)
+    mag_max = magnitude.max()
+    if mag_max > 0:
+        combination = (magnitude / (mag_max + 1e-8)) * 255.0
+    else:
+        combination = magnitude.copy()
+    combination = combination.astype(np.uint8)
+    # Step 6: Normalize again to 0..255 (second stretch, matches friend's pipeline)
     normalized = cv2.normalize(combination, None, 0, 255, cv2.NORM_MINMAX)
     normalized = normalized.astype(np.uint8)
-    # Step 7: Apply thresholds
+    # Step 7: Two thresholds (128 and 28) as in the PPT/demo
     _, result_128 = cv2.threshold(normalized, 128, 255, cv2.THRESH_BINARY)
-    _, result_28 = cv2.threshold(normalized, 28, 255, cv2.THRESH_BINARY)
-    # Step 8: Show results
+    _, result_28  = cv2.threshold(normalized,  28, 255, cv2.THRESH_BINARY)
+    # Step 8: Display all results
     cv2.imshow("Combination (Sobel X + Y)", normalized)
-    cv2.imshow("Threshold 128", result_128)
-    cv2.imshow("Threshold 28", result_28)
-
+    cv2.imshow("Threshold = 128", result_128)
+    cv2.imshow("Threshold = 28",  result_28)
+    # Step 9: Wait for key press and close
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+
 
 def gradient_angle3_4(img_path):
     # Step 1: Read image and convert to grayscale
@@ -278,3 +271,73 @@ def gradient_angle3_4(img_path):
     cv2.destroyAllWindows()
 
 # ========== Question 4 ========== #
+def affine_transform4(
+    img_path,
+    angle=30,         # degrees, positive = counter-clockwise
+    scale=0.9,        # 0.9 as in the slide
+    Tx=535, Ty=335,   # translation in pixels
+    cx=240, cy=200    # object center C (burger center in the slide)
+):
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+
+    h, w = image.shape[:2]
+
+    # 1) Rotation + Scale about the OBJECT center C (cx, cy)
+    M = cv2.getRotationMatrix2D((cx, cy), angle, scale)
+
+    # 2) Then translate (move the object center)
+    M[0, 2] += Tx
+    M[1, 2] += Ty
+
+    # 3) Apply affine transform (keep canvas same size as input)
+    result = cv2.warpAffine(image, M, (w, h))
+
+    # 4) Show
+    cv2.imshow("Original", image)
+    cv2.imshow("Transformed", result)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# ========== Question 5 ========== #
+def global_threshold5_1(img_path):
+    # Step 1: Read and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Step 2: Apply global threshold
+    _, threshold_image = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY)
+
+    # Step 3: Show results
+    cv2.imshow("Original image", image)
+    cv2.imshow("Global Threshold", threshold_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+def local_threshold5_2(img_path):
+    # Step 1: Read and convert to grayscale
+    image = cv2.imread(img_path)
+    if image is None:
+        print("Error: Cannot load image.")
+        return
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Step 2: Apply local (adaptive) threshold
+    threshold_image = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY,
+        19,
+        -1
+    )
+
+    # Step 3: Show results
+    cv2.imshow("Original image", image)
+    cv2.imshow("Adaptive threshold image", threshold_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
