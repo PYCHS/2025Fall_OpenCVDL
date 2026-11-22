@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+HW2/Hw2_1/data/
+HW2/Hw2_1/runs/

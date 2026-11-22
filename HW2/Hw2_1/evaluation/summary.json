@@ -1,0 +1,26 @@
+[
+  {
+    "activation": "Sigmoid",
+    "seed": 42,
+    "best_epoch": 17,
+    "best_validation_accuracy_percent": 98.58,
+    "test": {
+      "loss": 0.035765608490258456,
+      "accuracy_percent": 98.86,
+      "correct": 9886,
+      "count": 10000
+    }
+  },
+  {
+    "activation": "Relu",
+    "seed": 42,
+    "best_epoch": 17,
+    "best_validation_accuracy_percent": 99.3,
+    "test": {
+      "loss": 0.022915915229282838,
+      "accuracy_percent": 99.32,
+      "correct": 9932,
+      "count": 10000
+    }
+  }
+]

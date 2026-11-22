@@ -1,132 +1,154 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+"""Compare LeNet activations with validation-only checkpoint selection."""
+import argparse
+import hashlib
+import json
+import platform
+import random
+import time
+from pathlib import Path
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from model import LeNet5  # Import the class from model.py
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
+import torchvision
+from model import LeNet5
 
-# 1. Configuration
-BATCH_SIZE = 64
-EPOCHS = 20          # Requirement: At least 15 epochs 
-LR = 0.001
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def train_process(activation_name):
-    print(f"Start Training with {activation_name}...")
-    
-    # 2. Data Preparation
-    # CORRECTION: Removed Horizontal/Vertical Flips because they break digits (6 becomes 9)
-    train_transform = transforms.Compose([
-        transforms.Resize((32, 32)),           # Resize to 32x32
-        transforms.RandomRotation(degrees=15), # Augmentation: Rotation is safe!
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
+def make_loaders(data_dir, batch_size, seed):
+    evaluation = transforms.Compose([
+        transforms.Resize((32, 32)), transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
     ])
-    
-    # Validation data should NOT be augmented
-    val_transform = transforms.Compose([
-        transforms.Resize((32, 32)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
+    augmentation = transforms.Compose([
+        transforms.Resize((32, 32)), transforms.RandomRotation(15),
+        transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,)),
     ])
-    
-    # Download Datasets 
-    train_ds = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
-    val_ds = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=val_transform)
-    
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
-    
-    # 3. Model Setup
-    model = LeNet5(activation=activation_name.lower()).to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
-    criterion = nn.CrossEntropyLoss()
-    
-    # Lists to store metrics
-    loss_train_hist, loss_val_hist = [], []
-    acc_train_hist, acc_val_hist = [], []
-    
-    best_acc = 0.0
+    training_data = datasets.MNIST(data_dir, train=True, download=True, transform=augmentation)
+    validation_data = datasets.MNIST(data_dir, train=True, download=True, transform=evaluation)
+    indices = torch.randperm(len(training_data), generator=torch.Generator().manual_seed(seed))
+    train_indices, val_indices = indices[:55000], indices[55000:]
+    assert len(set(train_indices.tolist()) & set(val_indices.tolist())) == 0
+    assert len(train_indices) + len(val_indices) == 60000
+    train = DataLoader(Subset(training_data, train_indices.tolist()), batch_size=batch_size,
+                       shuffle=True, generator=torch.Generator().manual_seed(seed))
+    validation = DataLoader(Subset(validation_data, val_indices.tolist()), batch_size=batch_size)
+    metadata = {
+        'train_count': len(train_indices), 'validation_count': len(val_indices),
+        'split_seed': seed,
+        'train_indices_sha256': hashlib.sha256(train_indices.numpy().tobytes()).hexdigest(),
+        'validation_indices_sha256': hashlib.sha256(val_indices.numpy().tobytes()).hexdigest(),
+        'train_augmentation': 'Resize(32,32), RandomRotation(15), ToTensor, Normalize(0.5,0.5)',
+        'evaluation_transform': 'Resize(32,32), ToTensor, Normalize(0.5,0.5)',
+    }
+    return train, validation, evaluation, metadata
 
-    # 4. Training Loop
-    for epoch in range(EPOCHS):
-        model.train()
-        running_loss = 0.0
-        correct_train = 0
-        total_train = 0
-        
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-            
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            
-            running_loss += loss.item()
-            _, predicted = torch.max(outputs, 1)
-            total_train += labels.size(0)
-            correct_train += (predicted == labels).sum().item()
-            
-        train_loss = running_loss / len(train_loader)
-        train_acc = 100 * correct_train / total_train
-        
-        # Validation
-        model.eval()
-        val_loss = 0.0
-        correct_val = 0
-        total_val = 0
-        with torch.no_grad():
-            for inputs, labels in val_loader:
-                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs, 1)
-                total_val += labels.size(0)
-                correct_val += (predicted == labels).sum().item()
-        
-        valid_loss = val_loss / len(val_loader)
-        valid_acc = 100 * correct_val / total_val
-        
-        loss_train_hist.append(train_loss)
-        loss_val_hist.append(valid_loss)
-        acc_train_hist.append(train_acc)
-        acc_val_hist.append(valid_acc)
-        
-        print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {train_loss:.4f} | Acc: {train_acc:.2f}% | Val Acc: {valid_acc:.2f}%")
 
-        # Save Best Model 
-        if valid_acc > best_acc:
-            best_acc = valid_acc
-            torch.save(model.state_dict(), f"Weight_{activation_name}.pth")
+def run_epoch(model, loader, device, optimizer=None):
+    model.train(optimizer is not None)
+    total_loss, correct, count = 0.0, 0, 0
+    with torch.set_grad_enabled(optimizer is not None):
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            if optimizer is not None:
+                optimizer.zero_grad(set_to_none=True)
+            logits = model(images)
+            loss = nn.functional.cross_entropy(logits, labels)
+            if optimizer is not None:
+                loss.backward()
+                optimizer.step()
+            total_loss += loss.detach().item() * labels.numel()
+            correct += (logits.detach().argmax(1) == labels).sum().item()
+            count += labels.numel()
+    return {'loss': total_loss / count, 'accuracy_percent': 100 * correct / count,
+            'correct': correct, 'count': count}
 
-    # 5. Plotting and Saving Images 
-    plt.figure(figsize=(12, 5))
-    
-    # Loss Curve
-    plt.subplot(1, 2, 1)
-    plt.plot(loss_train_hist, label='Training Loss')
-    plt.plot(loss_val_hist, label='Validation Loss')
-    plt.title(f'Loss Curve ({activation_name})')
-    plt.legend()
-    
-    # Accuracy Curve
-    plt.subplot(1, 2, 2)
-    plt.plot(acc_train_hist, label='Training Acc')
-    plt.plot(acc_val_hist, label='Validation Acc')
-    plt.title(f'Accuracy Curve ({activation_name})')
-    plt.legend()
-    
-    # Save as .jpg
-    plt.savefig(f"Loss&Acc_{activation_name}.jpg")
-    plt.close()
-    print(f"Finished {activation_name}. Saved weights and plots.\n")
 
-if __name__ == "__main__":
-    # Train both versions
-    train_process("Sigmoid")
-    train_process("Relu")
+def train_process(activation, args, device):
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if device.type == 'cuda':
+        torch.cuda.manual_seed_all(args.seed)
+    train, validation, evaluation, split = make_loaders(args.data_dir, args.batch_size, args.seed)
+    model = LeNet5(activation=activation.lower()).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    checkpoint = args.output_dir / f'Weight_{activation}.pth'
+    history, best_accuracy, best_epoch = [], -1.0, None
+    started = time.perf_counter()
+    for epoch in range(1, args.epochs + 1):
+        train_metrics = run_epoch(model, train, device, optimizer)
+        val_metrics = run_epoch(model, validation, device)
+        history.append({'epoch': epoch, 'train': train_metrics, 'validation': val_metrics})
+        if val_metrics['accuracy_percent'] > best_accuracy:
+            best_accuracy, best_epoch = val_metrics['accuracy_percent'], epoch
+            torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, checkpoint)
+        print(f'{activation} epoch {epoch}/{args.epochs} '
+              f'train={train_metrics["accuracy_percent"]:.2f}% '
+              f'validation={val_metrics["accuracy_percent"]:.2f}%', flush=True)
+    training_seconds = time.perf_counter() - started
+    # The official test set is created and evaluated only after model selection ends.
+    model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
+    test_data = datasets.MNIST(args.data_dir, train=False, download=True, transform=evaluation)
+    test = run_epoch(model, DataLoader(test_data, batch_size=args.batch_size), device)
+    result = {
+        'activation': activation, 'seed': args.seed, 'epochs': args.epochs,
+        'batch_size': args.batch_size, 'learning_rate': args.learning_rate,
+        'optimizer': 'Adam', 'split': split, 'best_epoch': best_epoch,
+        'best_validation_accuracy_percent': best_accuracy, 'test': test,
+        'selection_rule': 'highest validation accuracy; earliest epoch on ties',
+        'test_evaluations': 1, 'training_seconds': training_seconds,
+        'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        'environment': {'python': platform.python_version(), 'torch': torch.__version__,
+                        'torchvision': torchvision.__version__, 'device': str(device),
+                        'platform': platform.platform(), 'threads': torch.get_num_threads()},
+        'history': history,
+        'limitations': ['Single seed per activation; no statistical superiority claim.',
+                        'Historical repository checkpoints used test-based selection; these are retrained from scratch.'],
+    }
+    (args.output_dir / f'results_{activation}.json').write_text(json.dumps(result, indent=2) + '\n')
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    for split_name in ['train', 'validation']:
+        axes[0].plot(range(1, args.epochs + 1), [r[split_name]['loss'] for r in history], label=split_name)
+        axes[1].plot(range(1, args.epochs + 1), [r[split_name]['accuracy_percent'] for r in history], label=split_name)
+    for ax, title in zip(axes, ['Cross-entropy loss', 'Accuracy (%)']):
+        ax.set(xlabel='Epoch', title=f'{activation}: {title}')
+        ax.legend()
+    fig.tight_layout()
+    fig.savefig(args.output_dir / f'Loss&Acc_{activation}.jpg', dpi=150)
+    plt.close(fig)
+    print(f'{activation}: selected epoch {best_epoch}; test {test["correct"]}/{test["count"]} '
+          f'({test["accuracy_percent"]:.2f}%)', flush=True)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--batch-size', type=int, default=64)
+    parser.add_argument('--learning-rate', type=float, default=0.001)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--threads', type=int, default=4)
+    parser.add_argument('--device', choices=['auto', 'cpu', 'cuda', 'mps'], default='auto')
+    parser.add_argument('--activations', choices=['Sigmoid', 'Relu'], nargs='+', default=['Sigmoid', 'Relu'])
+    parser.add_argument('--data-dir', type=Path, default=Path(__file__).parent / 'data')
+    parser.add_argument('--output-dir', type=Path, default=Path(__file__).parent / 'runs' / 'validation_split')
+    args = parser.parse_args()
+    if args.epochs < 1 or args.batch_size < 1 or args.learning_rate <= 0 or args.threads < 1:
+        parser.error('epochs, batch size, learning rate, and threads must be positive')
+    if args.output_dir.exists() and any(args.output_dir.iterdir()):
+        parser.error('output directory must be empty; preserve existing experiment records')
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    torch.set_num_threads(args.threads)
+    # CPU is the portable default; MPS is opt-in and recorded in experiment metadata.
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if args.device == 'auto' else torch.device(args.device)
+    results = [train_process(activation, args, device) for activation in args.activations]
+    (args.output_dir / 'summary.json').write_text(json.dumps([
+        {k: r[k] for k in ['activation', 'seed', 'best_epoch', 'best_validation_accuracy_percent', 'test']}
+        for r in results], indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()
